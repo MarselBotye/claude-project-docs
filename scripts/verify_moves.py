@@ -11,7 +11,8 @@
      ошибка, с номером строки копии.
   2. Файлы --to. Сколько строк файла - дословные куски копии (с границами строк копии) и сколько
      своих. Шапка до первого совпадения (заголовок, «перенесено из …») - своя, это нормально.
-     Свои строки внутри тела печатаются: это пересказ вместо переноса, разобраться.
+     Свои строки внутри тела печатаются: это пересказ вместо переноса, разобраться. Для журнала
+     (CHANGELOG.md, changelog/) свои строки не печатаются - это остальные записи.
   3. --sections. Изменения в копии и вставки в живом файле вне перечисленных разделов - ошибка
      (§7.6 покрывает §7.6.1). Без --sections проверка не делается.
 
@@ -137,10 +138,12 @@ def main(argv):
         own = [p for p in parts[first_copy:] if p[0] == "own"]
         own_lines = sum(p[2] - p[1] for p in own)
         ranges = ", ".join(f"{copy_nb[p[3]][0]}-{copy_nb[p[4] - 1][0]}" for p in copied)
+        journal = Path(f).name == "CHANGELOG.md" or "changelog" in Path(f).parts
         print(f"{f}: из копии {sum(p[2] - p[1] for p in copied)} строк в {len(copied)} кусках "
-              f"(строки копии {ranges or '-'}); шапка {header}; своих в теле {own_lines}")
+              f"(строки копии {ranges or '-'}); шапка {header}; своих в теле {own_lines}"
+              + (" (журнал: остальные записи - свои, не печатаются)" if journal else ""))
         shown = 0
-        for p in own:
+        for p in ([] if journal else own):
             for k in range(p[1], p[2]):
                 if shown >= args.show:
                     break
