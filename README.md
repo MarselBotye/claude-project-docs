@@ -59,6 +59,18 @@ project-docs/
 
 Скрипты - только стандартная библиотека Python 3, работают на macOS, Linux и Windows.
 
+## Установка отдельно от репозитория скиллов
+
+Скилл зеркалируется в `https://github.com/MarselBotye/claude-project-docs` (тот же код, та же
+история). Поставить только его:
+
+```bash
+git clone https://github.com/MarselBotye/claude-project-docs.git ~/claude-project-docs
+ln -s ~/claude-project-docs ~/.claude/skills/project-docs
+```
+
+Обновляется сам: Шаг 0 скилла делает `git pull --ff-only` в папке, куда ведёт симлинк.
+
 ## Как уживается со `sprint-planning`
 
 `sprint-planning` пишет строки `[СОСТОЯНИЕ]` в раздел «Активный спринт» `TASKS.md` и итог
