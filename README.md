@@ -48,9 +48,13 @@ project-docs/
                             project_CONTEXT.md, project_TASKS.md, ARCHIVE_README.md
   scripts/
     doc_lint.py             линтер: python3 doc_lint.py <корень> [--summary] [--only CODE]
-    archive_copy.py         копия в ARCHIVE/<дата>/ со сверкой sha256 и заготовкой описи
+    archive_copy.py         копия в <архив>/<дата>/ со сверкой sha256 и заготовкой описи; архив - ARCHIVE/,
+                            строка `ARCHIVE/` в «Внешних корнях» или --archive-root; повтор за день -
+                            суффикс этапа (--suffix) или времени, перезаписи нет
     compact_changelog.py    план и выполнение ротации журнала по месяцам и выжимок длинных записей в notes/;
                             --rules печатает правила и решения из уходящих записей для CONTEXT.md
+    verify_moves.py         сверка после переноса: копия из архива против живого файла и файлов --to -
+                            ничего не потеряно, перенесено дословно, правки только в --sections
 ```
 
 Скрипты - только стандартная библиотека Python 3, работают на macOS, Linux и Windows.

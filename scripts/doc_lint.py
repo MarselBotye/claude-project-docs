@@ -9,7 +9,8 @@
   E DASH      длинное или среднее тире вместо дефиса
   E LABEL     метка вне общего набора и вне таблицы «Местные метки» в CONVENTIONS.md
   E LABELDATE метка, которой нужна дата, без даты ([ОТВЕТ], [РЕШЕНИЕ], [СЛОВА] ...)
-  E LINK      ссылка на файл .md, которого нет (в журнале, changelog/ и notes/ - W)
+  E LINK      ссылка на файл .md, которого нет (в журнале, changelog/ и notes/, в том числе
+              в подпроектах - W)
   E SECTION   ссылка `FILE.md §3.2` на раздел, которого в файле нет (без файла - W)
   E BUDGET    превышен бюджет строк файла раскладки или записи журнала (прочие файлы - W)
   E STATE     раздел «Состояние на <дату>» вне журнала - состояние ведётся не там
@@ -24,9 +25,13 @@
   W DUPSEC    повтор номера раздела
   W NONUM     раздел без номера в файле раскладки
 
-Внутри блоков кода (```) ничего не проверяется. В docs/changelog/ и docs/notes/ - только LINK
-и SECRET. Каталоги из таблицы «Вне раскладки» в CONVENTIONS.md пропускаются целиком. Ссылки
-вне docs/ пишутся с префиксом из таблицы «Внешние корни» там же; корня нет на машине - пропуск.
+Внутри блоков кода (```) ничего не проверяется. В changelog/ и notes/ (и в подпроектах) - только
+LINK и SECRET. Четыре таблицы CONVENTIONS.md §«Документы» читаются как настройки: «Местные метки»
+(разрешённые метки), «Вне раскладки» (каталоги, которые пропускаются целиком), «Внешние корни»
+(префикс ссылки вне docs/; необязательная третья колонка «Где на диске» - куда префикс ведёт на
+самом деле, например `ARCHIVE/` -> `../PROJECT_ARCHIVE/`; корня нет на машине - пропуск),
+«Местные бюджеты» (`| Файл | Строк | Почему |` - бюджет файла вместо общего, путь от docs/ или
+`CLAUDE.md`).
 
 Только стандартная библиотека, работает на macOS, Linux и Windows.
 """
@@ -118,11 +123,12 @@ def strip_code(lines):
 
 
 def conventions_tables(docs):
-    """Три таблицы из CONVENTIONS.md: местные метки, каталоги вне раскладки, внешние корни."""
-    labels, skip_dirs, ext_roots = set(), [], []
+    """Четыре таблицы из CONVENTIONS.md: местные метки (set), каталоги вне раскладки (list),
+    внешние корни (list пар: префикс в ссылке, где на диске или None), местные бюджеты (dict)."""
+    labels, skip_dirs, ext_roots, budgets = set(), [], [], {}
     conv = docs / "CONVENTIONS.md"
     if not conv.exists():
-        return labels, skip_dirs, ext_roots
+        return labels, skip_dirs, ext_roots, budgets
     current = None
     for line in read_lines(conv):
         low = line.lower()
@@ -132,11 +138,14 @@ def conventions_tables(docs):
             current = "skip"
         elif "внешние корни" in low:
             current = "roots"
+        elif "местные бюджеты" in low:
+            current = "budgets"
         elif line.startswith("#"):
             current = None
         m = RE_TABLE_ROW.match(line)
         if not m or current is None:
             continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
         first_cell = line.split("|")[1]
         cell = m.group(1).strip()
         if current == "labels":
@@ -145,8 +154,16 @@ def conventions_tables(docs):
         elif current == "skip":
             skip_dirs.append(cell.strip("/"))
         elif current == "roots":
-            ext_roots.append(cell)
-    return labels, skip_dirs, ext_roots
+            disk = None
+            if len(cells) >= 3:
+                dm = re.search(r"`([^`]+)`", cells[2])
+                if dm:
+                    disk = dm.group(1).strip()
+            ext_roots.append((cell, disk))
+        elif current == "budgets":
+            if len(cells) >= 2 and re.fullmatch(r"\d[\d ]*", cells[1]):
+                budgets[cell.strip("/")] = int(cells[1].replace(" ", ""))
+    return labels, skip_dirs, ext_roots, budgets
 
 
 def budget_for(rel):
@@ -163,13 +180,13 @@ def budget_for(rel):
 class Linter:
     def __init__(self, root, docs, rep, max_days):
         self.root, self.docs, self.rep, self.max_days = root, docs, rep, max_days
-        self.local_labels, skip, roots = conventions_tables(docs)
+        self.local_labels, skip, roots, self.local_budgets = conventions_tables(docs)
         self.allowed = LABELS | self.local_labels
         # пути в таблице - от корня проекта (docs/confluence/) или от docs/ (confluence/)
         self.skip_dirs = [(root / s) if (root / s).exists() else (docs / s) for s in skip]
         self.ext_roots = []  # (как записан в таблице, куда ведёт на диске)
-        for r in roots:
-            p = Path(r).expanduser()
+        for r, disk in roots:
+            p = Path(disk or r).expanduser()
             if not p.is_absolute():
                 p = root / p
             self.ext_roots.append((r, p))
@@ -184,8 +201,18 @@ class Linter:
         return any(d == path or d in path.parents for d in self.skip_dirs)
 
     def immutable(self, path):
+        """changelog/ и notes/ на любом уровне: docs/notes/, docs/projects/<имя>/notes/."""
         rel = path.relative_to(self.docs).parts if self.docs in path.parents else ()
-        return bool(rel) and rel[0] in IMMUTABLE_DIRS
+        return any(part in IMMUTABLE_DIRS for part in rel[:-1])
+
+    def limit_for(self, path):
+        """Бюджет файла и уровень находки; таблица «Местные бюджеты» перекрывает общий бюджет."""
+        is_claude = path.name == "CLAUDE.md" and path.parent == self.root
+        rel = path.relative_to(self.docs).as_posix() if self.docs in path.parents else path.name
+        limit, level = (CLAUDE_MD_BUDGET, "E") if is_claude else budget_for(rel)
+        if rel in self.local_budgets:
+            limit = self.local_budgets[rel]
+        return limit, level
 
     def section_numbers(self, path):
         if path not in self.headings:
@@ -226,7 +253,7 @@ class Linter:
 
         if not immutable:
             nonblank = sum(1 for l in raw if l.strip())
-            limit, level = (CLAUDE_MD_BUDGET, "E") if is_claude else budget_for(rel)
+            limit, level = self.limit_for(path)
             if nonblank > limit:
                 rep.add(level, "BUDGET", path, 0, f"{nonblank} непустых строк при бюджете {limit}")
 
@@ -360,13 +387,7 @@ class Linter:
         for path in files:
             rel = path.relative_to(self.root).as_posix()
             nonblank = sum(1 for l in read_lines(path) if l.strip())
-            drel = path.relative_to(self.docs).as_posix() if self.docs in path.parents else path.name
-            if self.immutable(path):
-                budget = "-"
-            elif path.name == "CLAUDE.md" and path.parent == self.root:
-                budget = CLAUDE_MD_BUDGET
-            else:
-                budget = budget_for(drel)[0]
+            budget = "-" if self.immutable(path) else self.limit_for(path)[0]
             e = sum(1 for i in self.rep.items if i[2] == rel and i[0] == "E")
             w = sum(1 for i in self.rep.items if i[2] == rel and i[0] == "W")
             flag = " !" if budget != "-" and nonblank > budget else ""
